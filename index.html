@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>PitchPad</title>
+<style>
+  :root{
+    --visible-octaves: 2;
+    --semitones-per-octave: 12;
+    --control-height-desktop: 64px;
+    --control-height-mobile: 56px;
+    --control-gap: 8px;
+    --btn-padding-vertical: 6px;
+    --btn-padding-horizontal: 10px;
+    --btn-font-size: 14px;
+  }
+
+  /* App fills viewport so we can precisely size controls + piano */
+  html,body{ height:100%; margin:0; }
+  body{
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+    background:#f6f7fb;
+    color:#111;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    box-sizing:border-box;
+    padding:0;
+  }
+
+  /* Controls row sits above piano; make it compact */
+  .controls{
+    display:flex;
+    gap:var(--control-gap);
+    align-items:center;
+    padding:8px;
+    box-sizing:border-box;
+    background:linear-gradient(#ffffff, #fbfdff);
+    border-bottom:1px solid rgba(0,0,0,0.04);
+    flex:0 0 var(--control-height-desktop);
+  }
+
+  /* Buttons: thinner, closer to piano */
+  button, select{
+    padding: var(--btn-padding-vertical) var(--btn-padding-horizontal);
+    border-radius:6px;
+    border:1px solid #cfd6e6;
+    background:white;
+    cursor:pointer;
+    font-weight:600;
+    font-size:var(--btn-font-size);
+    line-height:1;
+    height:36px;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+
+  /* Make the select visually similar but compact */
+  select{ height:36px; padding:0 8px; }
+
+  .hint{ color:#444; font-size:13px; margin-left:6px; white-space:nowrap; }
+
+  /* Piano area grows to fill remaining height */
+  .piano-viewport{
+    width:100%;
+    flex:1 1 auto;
+    border-radius:8px 8px 0 0;
+    background:linear-gradient(#fff,#f3f6ff);
+    box-shadow:0 6px 18px rgba(20,30,60,0.06);
+    overflow:hidden;
+    position:relative;
+    touch-action:none;
+    display:block;
+  }
+
+  /* white keys container (flow) */
+  .white-container{
+    position:absolute;
+    left:0;
+    top:0;
+    bottom:0;
+    height:100%;
+    display:flex;
+    align-items:stretch;
+    z-index:1;
+    transition: transform 220ms cubic-bezier(.2,.9,.2,1);
+    will-change: transform;
+  }
+
+  /* white keys are full height of piano-viewport (tall keys) */
+  .white-key{
+    position:relative;
+    background:linear-gradient(#fff,#f7f9ff);
+    border-left:1px solid rgba(0,0,0,0.06);
+    border-right:1px solid rgba(0,0,0,0.02);
+    box-sizing:border-box;
+    user-select:none;
+    display:flex;
+    align-items:flex-start;
+    justify-content:flex-start;
+    padding:6px 6px 8px 6px;
+    font-size:12px;
+    color:#333;
+    flex-shrink:0;
+    height:100%;
+  }
+  .white-key.pressed{ background:linear-gradient(#e6f0ff,#dfeeff); transform: translateY(2px); }
+
+  /* black keys absolute above whites */
+  .black-key{
+    position:absolute;
+    top:6%;
+    height:58%;
+    background:linear-gradient(#111,#000);
+    border-radius:4px;
+    z-index:3;
+    box-shadow:0 6px 12px rgba(0,0,0,0.45);
+    transform: translateX(-50%);
+    pointer-events:auto;
+  }
+  .black-key.pressed{ background:linear-gradient(#222,#000); transform: translateY(2px); box-shadow:0 3px 8px rgba(0,0,0,0.5); }
+
+  .note-label{
+    pointer-events:none;
+    opacity:0.85;
+    font-size:12px;
+    margin-left:4px;
+    margin-top:4px;
+  }
+
+  /* Landscape-specific adjustments for phones: make controls smaller and piano taller */
+  @media (orientation: landscape) and (max-width: 900px){
+    :root{
+      --control-height-desktop: 48px;
+      --btn-font-size: 13px;
+      --btn-padding-vertical: 4px;
+      --btn-padding-horizontal: 8px;
+    }
+    .controls{ padding:6px; gap:6px; }
+    button, select{ height:32px; border-radius:6px; }
+    .hint{ font-size:12px; margin-left:4px; }
+  }
+
+  /* Very small phones: reduce control height further */
+  @media (max-height:420px){
+    :root{ --control-height-desktop: 44px; --btn-font-size:12px; }
+    .controls{ padding:6px; }
+    button, select{ height:30px; font-size:12px; }
+  }
+
+  /* Portrait: keep controls compact but piano still tall */
+  @media (orientation: portrait){
+    :root{ --control-height-desktop: 56px; }
+  }
+
+  /* Accessibility focus */
+  button:focus, select:focus { outline:2px solid rgba(30,120,255,0.18); outline-offset:2px; }
+
+</style>
+</head>
+<body>
+
+<div class="controls" id="controls">
+  <button id="toggleFitBtn">Fit: <span id="fitLabel">2 octaves</span></button>
+  <button id="leftBtn" aria-label="Shift left">◀︎</button>
+  <button id="rightBtn" aria-label="Shift right">▶︎</button>
+
+  <label style="display:flex;align-items:center;gap:6px;margin-left:6px;">
+    <span style="font-size:13px;color:#333;">Pitch</span>
+    <select id="pitchSteps" title="Choose pitch steps">
+      <option value="1">1</option>
+      <option value="2" selected>2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+    </select>
+  </label>
+
+  <button id="lockScrollBtn" style="margin-left:6px;">Lock scroll: <span id="lockLabel">off</span></button>
+  <div class="hint" id="rangeText" style="margin-left:auto;margin-right:6px;">Range:</div>
+</div>
+
+<div class="piano-viewport" id="viewport" role="application" aria-label="Piano keyboard">
+  <div class="white-container" id="whiteContainer"></div>
+  <!-- black keys appended absolutely by JS -->
+</div>
+
+<script>
+/* ====== Configuration (same logic as previous version) ====== */
+const START_OCTAVE = 3;
+const OCTAVE_COUNT = 3;
+const SEMITONES_PER_OCTAVE = 12;
+const TOTAL_SEMITONES = OCTAVE_COUNT * SEMITONES_PER_OCTAVE;
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const NATURAL_INDICES = [0,2,4,5,7,9,11];
+const BLACK_INDICES = [1,3,6,8,10];
+
+/* ====== State ====== */
+let visibleOctaves = 2;
+let offsetOctaves = 0;
+let audioCtx = null;
+let activeVoices = new Map();
+let pitchSteps = parseInt(document.getElementById('pitchSteps').value, 10);
+
+/* ====== DOM refs ====== */
+const viewport = document.getElementById('viewport');
+const whiteContainer = document.getElementById('whiteContainer');
+const toggleFitBtn = document.getElementById('toggleFitBtn');
+const fitLabel = document.getElementById('fitLabel');
+const leftBtn = document.getElementById('leftBtn');
+const rightBtn = document.getElementById('rightBtn');
+const lockScrollBtn = document.getElementById('lockScrollBtn');
+const lockLabel = document.getElementById('lockLabel');
+const rangeText = document.getElementById('rangeText');
+const pitchSelect = document.getElementById('pitchSteps');
+
+/* ====== Build keyboard DOM ====== */
+function buildKeyboard(){
+  whiteContainer.innerHTML = '';
+  const whiteKeys = [];
+  for(let o=0;o<OCTAVE_COUNT;o++){
+    const octave = START_OCTAVE + o;
+    for(const idx of NATURAL_INDICES){
+      const semitoneIndex = o*12 + idx;
+      const noteName = NOTE_NAMES[idx] + octave;
+      whiteKeys.push({semitone: semitoneIndex, note: noteName});
+    }
+  }
+  whiteKeys.forEach(w => {
+    const el = document.createElement('div');
+    el.className = 'white-key';
+    el.dataset.semitone = w.semitone;
+    el.dataset.note = w.note;
+    const label = document.createElement('div');
+    label.className = 'note-label';
+    label.textContent = w.note;
+    el.appendChild(label);
+    el.addEventListener('pointerdown', onPointerDownWhite);
+    el.addEventListener('pointermove', onPointerMove);
+    el.addEventListener('pointerup', onPointerUp);
+    el.addEventListener('pointerleave', onPointerUp);
+    el.addEventListener('pointercancel', onPointerUp);
+    whiteContainer.appendChild(el);
+  });
+
+  // remove existing black keys
+  const existingBlacks = viewport.querySelectorAll('.black-key');
+  existingBlacks.forEach(n => n.remove());
+
+  // create black key elements (absolute)
+  for(let i=0;i<TOTAL_SEMITONES;i++){
+    const noteIndex = i % 12;
+    if(BLACK_INDICES.includes(noteIndex)){
+      const octave = START_OCTAVE + Math.floor(i/12);
+      const noteName = NOTE_NAMES[noteIndex] + octave;
+      const b = document.createElement('div');
+      b.className = 'black-key';
+      b.dataset.semitone = i;
+      b.dataset.note = noteName;
+      b.addEventListener('pointerdown', onPointerDownBlack);
+      b.addEventListener('pointermove', onPointerMove);
+      b.addEventListener('pointerup', onPointerUp);
+      b.addEventListener('pointerleave', onPointerUp);
+      b.addEventListener('pointercancel', onPointerUp);
+      viewport.appendChild(b);
+    }
+  }
+}
+
+/* ====== Layout: compute sizes and position black keys ====== */
+function layout(){
+  const viewportWidth = viewport.clientWidth;
+  const semitonesVisible = visibleOctaves * SEMITONES_PER_OCTAVE;
+  const whiteVisible = visibleOctaves * NATURAL_INDICES.length;
+  const whiteKeyWidth = viewportWidth / whiteVisible;
+
+  const whiteEls = whiteContainer.children;
+  for(let i=0;i<whiteEls.length;i++){
+    whiteEls[i].style.width = whiteKeyWidth + 'px';
+  }
+
+  const totalWhiteKeys = OCTAVE_COUNT * NATURAL_INDICES.length;
+  whiteContainer.style.width = (totalWhiteKeys * whiteKeyWidth) + 'px';
+
+  const maxOffsetOctaves = Math.max(0, OCTAVE_COUNT - visibleOctaves);
+  if(offsetOctaves < 0) offsetOctaves = 0;
+  if(offsetOctaves > maxOffsetOctaves) offsetOctaves = maxOffsetOctaves;
+
+  const translateX = -offsetOctaves * (NATURAL_INDICES.length * whiteKeyWidth);
+  whiteContainer.style.transform = `translateX(${translateX}px)`;
+
+  const whitePositions = [];
+  let acc = 0;
+  for(let i=0;i<totalWhiteKeys;i++){
+    whitePositions.push(acc);
+    acc += whiteKeyWidth;
+  }
+
+  const semitoneToWhiteLeft = new Array(TOTAL_SEMITONES).fill(-1);
+  let whiteIndex = 0;
+  for(let o=0;o<OCTAVE_COUNT;o++){
+    for(const idx of NATURAL_INDICES){
+      const semitone = o*12 + idx;
+      semitoneToWhiteLeft[semitone] = whiteIndex;
+      whiteIndex++;
+    }
+  }
+
+  const blackEls = viewport.querySelectorAll('.black-key');
+  blackEls.forEach(b => {
+    const s = parseInt(b.dataset.semitone,10);
+    let leftWhite = -1;
+    for(let k = s-1; k >= 0; k--){
+      if(semitoneToWhiteLeft[k] !== -1){ leftWhite = semitoneToWhiteLeft[k]; break; }
+    }
+    if(leftWhite === -1) leftWhite = 0;
+    const leftX = whitePositions[leftWhite];
+    const centerX = leftX + whiteKeyWidth * 0.75;
+    const blackWidth = Math.max(whiteKeyWidth * 0.58, 18); // ensure minimum width on tiny screens
+    b.style.width = blackWidth + 'px';
+    b.style.left = (centerX) + 'px';
+    b.style.transform = `translateX(${translateX}px) translateX(-50%)`;
+  });
+
+  const leftSemitone = offsetOctaves * SEMITONES_PER_OCTAVE;
+  const rightSemitone = leftSemitone + semitonesVisible - 1;
+  const leftNote = noteNameFromSemitone(leftSemitone) || '';
+  const rightNote = noteNameFromSemitone(rightSemitone) || '';
+  rangeText.textContent = leftNote + ' → ' + rightNote;
+  fitLabel.textContent = visibleOctaves + (visibleOctaves === 1 ? ' octave' : ' octaves');
+}
+
+/* helper */
+function noteNameFromSemitone(s){
+  if(s < 0 || s >= TOTAL_SEMITONES) return '';
+  const octave = START_OCTAVE + Math.floor(s / 12);
+  const idx = s % 12;
+  return NOTE_NAMES[idx] + octave;
+}
+
+/* Controls */
+function shiftLeft(){ offsetOctaves -= 1; layout(); }
+function shiftRight(){ offsetOctaves += 1; layout(); }
+function toggleFit(){ visibleOctaves = (visibleOctaves === 2) ? 1 : 2; layout(); }
+let scrollLocked = false;
+function toggleScrollLock(){ scrollLocked = !scrollLocked; document.body.style.overflow = scrollLocked ? 'hidden' : ''; lockLabel.textContent = scrollLocked ? 'on' : 'off'; }
+pitchSelect.addEventListener('change', () => { pitchSteps = parseInt(pitchSelect.value, 10); });
+
+/* Audio (sine + triangle) and pitch-drag logic (same as before) */
+function ensureAudio(){ if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+function noteToFrequency(noteName){
+  const m = noteName.match(/^([A-G]#?)(\d+)$/);
+  if(!m) return 440;
+  const name = m[1];
+  const octave = parseInt(m[2],10);
+  const map = { 'C':0,'C#':1,'D':2,'D#':3,'E':4,'F':5,'F#':6,'G':7,'G#':8,'A':9,'A#':10,'B':11 };
+  const semitone = map[name];
+  const midi = 12 + octave*12 + semitone;
+  const diff = midi - 69;
+  return 440 * Math.pow(2, diff/12);
+}
+function createVoice(freq){
+  ensureAudio();
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+  const master = audioCtx.createGain();
+  master.gain.value = 0.25;
+  master.connect(audioCtx.destination);
+  const oscS = audioCtx.createOscillator();
+  oscS.type = 'sine';
+  oscS.frequency.value = freq;
+  const gS = audioCtx.createGain();
+  gS.gain.value = 1.0;
+  oscS.connect(gS);
+  gS.connect(master);
+  const oscT = audioCtx.createOscillator();
+  oscT.type = 'triangle';
+  oscT.frequency.value = freq;
+  const gT = audioCtx.createGain();
+  gT.gain.value = 0.8;
+  oscT.connect(gT);
+  gT.connect(master);
+  const now = audioCtx.currentTime;
+  gS.gain.setValueAtTime(0.0001, now);
+  gT.gain.setValueAtTime(0.0001, now);
+  gS.gain.exponentialRampToValueAtTime(1.0, now + 0.02);
+  gT.gain.exponentialRampToValueAtTime(0.8, now + 0.02);
+  oscS.start(now);
+  oscT.start(now);
+  return { oscS, oscT, gS, gT, master, baseFreq: freq, currentSemitoneOffset: 0 };
+}
+function updateVoiceFrequency(voice, semitoneOffset){
+  const newFreq = voice.baseFreq * Math.pow(2, semitoneOffset / 12);
+  try{
+    const t = audioCtx.currentTime;
+    voice.oscS.frequency.cancelScheduledValues(t);
+    voice.oscT.frequency.cancelScheduledValues(t);
+    voice.oscS.frequency.linearRampToValueAtTime(newFreq, t + 0.06);
+    voice.oscT.frequency.linearRampToValueAtTime(newFreq, t + 0.06);
+    voice.currentSemitoneOffset = semitoneOffset;
+  }catch(e){}
+}
+function stopVoice(voice){
+  if(!voice) return;
+  const now = audioCtx.currentTime;
+  try{
+    voice.gS.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+    voice.gT.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+    voice.master.gain.exponentialRampToValueAtTime(0.0001, now + 0.04);
+    voice.oscS.stop(now + 0.05);
+    voice.oscT.stop(now + 0.05);
+  }catch(e){}
+}
+
+/* Vertical zone helpers */
+function getVerticalZone(rect, clientY){
+  const rel = (clientY - rect.top) / rect.height;
+  if(rel <= 0.2) return 'top';
+  if(rel >= 0.8) return 'bottom';
+  return 'middle';
+}
+function computeSemitoneOffsetFromDrag(initialZone, rect, clientY, steps){
+  const rel = (clientY - rect.top) / rect.height;
+  if(initialZone === 'middle') return 0;
+  if(initialZone === 'bottom'){
+    const progress = (0.8 - rel) / 0.6;
+    const p = Math.max(0, Math.min(1, progress));
+    return p * steps;
+  }
+  if(initialZone === 'top'){
+    const progress = (rel - 0.2) / 0.6;
+    const p = Math.max(0, Math.min(1, progress));
+    return -p * steps;
+  }
+  return 0;
+}
+
+/* Pointer handlers */
+function onPointerDownWhite(e){
+  e.preventDefault();
+  const el = e.currentTarget;
+  const rect = el.getBoundingClientRect();
+  const id = 'p' + e.pointerId;
+  const note = el.dataset.note;
+  const zone = getVerticalZone(rect, e.clientY);
+  el.classList.add('pressed');
+  const baseFreq = noteToFrequency(note);
+  const voice = createVoice(baseFreq);
+  activeVoices.set(id, { voice, element: el, initialZone: zone, baseNote: note, rect });
+  try{ el.setPointerCapture(e.pointerId); }catch(e){}
+}
+function onPointerDownBlack(e){
+  e.preventDefault();
+  const el = e.currentTarget;
+  const rect = el.getBoundingClientRect();
+  const id = 'p' + e.pointerId;
+  const note = el.dataset.note;
+  const zone = getVerticalZone(rect, e.clientY);
+  el.classList.add('pressed');
+  const baseFreq = noteToFrequency(note);
+  const voice = createVoice(baseFreq);
+  activeVoices.set(id, { voice, element: el, initialZone: zone, baseNote: note, rect });
+  try{ el.setPointerCapture(e.pointerId); }catch(e){}
+}
+function onPointerMove(e){
+  const id = 'p' + e.pointerId;
+  const info = activeVoices.get(id);
+  if(!info) return;
+  const { voice, initialZone, rect } = info;
+  const semitoneOffset = computeSemitoneOffsetFromDrag(initialZone, rect, e.clientY, pitchSteps);
+  updateVoiceFrequency(voice, semitoneOffset);
+}
+function onPointerUp(e){
+  const id = 'p' + e.pointerId;
+  const info = activeVoices.get(id);
+  if(!info) return;
+  const { voice, element } = info;
+  if(element) element.classList.remove('pressed');
+  stopVoice(voice);
+  activeVoices.delete(id);
+  try{ element && element.releasePointerCapture && element.releasePointerCapture(e.pointerId); }catch(e){}
+}
+
+/* Wiring */
+toggleFitBtn.addEventListener('click', () => { toggleFit(); });
+leftBtn.addEventListener('click', () => { shiftLeft(); });
+rightBtn.addEventListener('click', () => { shiftRight(); });
+lockScrollBtn.addEventListener('click', () => { toggleScrollLock(); });
+window.addEventListener('keydown', (e) => {
+  if(e.key === 'ArrowLeft') shiftLeft();
+  if(e.key === 'ArrowRight') shiftRight();
+  if(e.key === 'f' || e.key === 'F') toggleFit();
+  if(e.key === 'l' || e.key === 'L') toggleScrollLock();
+});
+
+/* Resize observer to relayout on size changes */
+const ro = new ResizeObserver(() => layout());
+ro.observe(viewport);
+
+/* Prevent page scroll while interacting with piano */
+let touching = false;
+viewport.addEventListener('pointerdown', () => touching = true, {passive:false});
+viewport.addEventListener('pointerup', () => touching = false, {passive:false});
+viewport.addEventListener('touchmove', (e) => { if(touching) e.preventDefault(); }, {passive:false});
+
+/* Build and layout */
+buildKeyboard();
+layout();
+
+/* Re-layout on orientation change to ensure full-screen fit on phones */
+window.addEventListener('orientationchange', () => {
+  // small delay to allow viewport metrics to update on some mobile browsers
+  setTimeout(() => { layout(); }, 120);
+});
+
+rangeText.title = 'Touch middle 60% to lock pitch; touch bottom/top 20% and drag to shift pitch by selected steps.';
+</script>
+</body>
+</html>
